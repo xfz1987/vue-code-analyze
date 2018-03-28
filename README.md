@@ -2,7 +2,10 @@
 ## MVVM
 > - MVVM并不是VUE创建的，很早的时候**微软**就有了**Silverlight**
 > - IE9以下不支持VUE，是因为浏览器不支持Object.defineProperty，而这是vue核心利用的技术
-> 如果想要向下兼容，则需要使用 vbscript
+> 如果想要向下兼容，则需要使用 VBbScript
+> > VBbScript很早就有class的实现，这样就能拥有get和set方法
+> - 
+> 很早的时候，一些浏览器拥有 `__defineGetter__ 和 __defineSetter__`方法，来模拟set和get，来实现双向数据绑定
 
 ![](readImg/mvvm.png)
 ## Vue架构概览
@@ -27,14 +30,17 @@
 > - 1.全局创建一个vue实例(类)
 > - 2.实例挂载属性 data {text:'hello'}
 > - 3.observe 遍历了data对象，进行拆分
-> - 4.定义一个相关函数(vue实例对象, text, 'hello world')
-> - 5.Object.defineProperty将data数据进行 set和get
-> - 6.Dep 连接watcher和observer的依赖
-> - > text -> dep.addSub(Dep.target)收集依赖，观察者
-> - 7.Dep 就是一个队列，实现了观察者模式
-> - 8.Dep.target: 读到html {{text}} -> Dep.target -> watcher 
-> - 9.Compile(app节点,vue的实例对象)将app节点内容转换成文档片段，拿回html，编译指令，插回到dom,并创建一个watcher
-> - 10.setState -> virtual dom-diff -> batch update dom
+> - 4.Object.defineProperty将data数据里的属性分别进行 set和get
+> - 5.Dep 连接watcher和observer的依赖
+> - 6.text -> dep.addSub(Dep.target) dep收集依赖
+> - > Oberver get时: 加入观察者，通过Dep中的addSub(Dep.target)收集依赖(观察者)，加入到观察者列表subs
+> - > Oberver set时: 通知观察者，通过Dep中遍历subs，分别执行notify()，通知观察者watcher数据更新了
+> - > watcher 去更新DOM-> 9
+> - > 因此 Dep 很好的实现了观察者模式
+> - 7.Dep.target: 读到html {{text}} -> Dep.target -> watcher 
+> - 8.Compile(app节点,vue的实例对象)将app节点内容转换成文档片段，拿回html，编译指令，插回到dom,并创建一个watcher (绑定到Dep.target)
+> - > watcher：将watcher加入到 batch 队列
+> - 9.setState -> virtual dom-diff -> batch update dom
 
 
 ```bash
@@ -79,7 +85,7 @@ function observe(obj, vm) {
     defineReactive(vm, key, obj[key]);
   })
 }
-4.定义一个相关函数(vue实例对象, text, 'hello world')
+4.Object.defineProperty将data数据里的属性分别进行 set和get
 /**
  * obj: vue实例
  * key: text
@@ -87,30 +93,30 @@ function observe(obj, vm) {
  */
 function defineReactive(vm, key, val) {
   var dep = new Dep();
-  5.Object.defineProperty将data数据进行 set和get
   Object.defineProperty(vm, key, {
     get: function() {
-      6.添加观察者watcher到主题对象Dep
+      6.addSub添加观察者watcher到主题对象Dep
       if (Dep.target) {
         //JS的浏览器单线程特性，保证这个全局变量在同一时间内，只会有同一个监听器使用
         dep.addSub(Dep.target);
       }
       return val;
     },
+    6.notify
     set: function(newVal) {
       //如果set的值与原来的值相同则返回
       if (newVal === val) return;
       //不同则由dep来notify发通知给watcher
       val = newVal;
       console.log(val);
-      6.作为发布者发出通知
+      5.作为发布者发出通知
       dep.notify();
     }
   })
 }
 
 -------------------Dep----------------------
-7.Dep 就是发布者，subs就是收集来的订阅者（就是一个个watcher），很好的实现了观察者模式
+5.Dep 就是发布者，subs就是收集来的订阅者（就是一个个watcher），很好的实现了观察者模式
 function Dep() {
   this.subs = [];
 }
@@ -126,7 +132,7 @@ Dep.prototype = {
 }
 
 ----------------Watcher--------------------
-//8.
+//7.
 function Watcher(vm, node, name, type) {
     Dep.target = this;
     this.name = name;
@@ -139,7 +145,7 @@ function Watcher(vm, node, name, type) {
 Watcher.prototype = {
     update: function() {
         this.get();
-        //10.批量更新
+        //9.批量更新
         var batcher = new Batcher();
         batcher.push(this);
         // this.node[this.type] = this.value; // 订阅者执行相应操作
@@ -155,7 +161,7 @@ Watcher.prototype = {
 }
 
 --------------------Compile----------------------
-Compile(app节点,vue的实例对象)将app节点内容转换成文档片段，拿回html，编译指令，插回到dom,并创建一个watcher
+8.Compile(app节点,vue的实例对象)将app节点内容转换成文档片段，拿回html，编译指令，插回到dom,并创建一个watcher
 //此处代码比较多，简写一下
 function Compile(node, vm) {
   if (node) {
@@ -230,6 +236,10 @@ Compile.prototype = {
 > - > promise Object.observe(将要废掉) MutationObserver(用来取代Object.observe)
 
 ![](readImg/event_loop.png)
+
+当model被修改时，对应的watcher会push进异步任务队列中(update queue)，同时还会在异步队列中添加一个task用于flush当前的update
+为了让flush动作能在当前Task结束后尽可能早的开始，Vue会优先尝试microtask（MutationObserver或Promise），如果两者浏览器都不支持，则 fallback到setTimeout
+**因此说，VUE是依赖js和浏览器特性的，并不像react拥有成熟的事务设计思想**
 
 ## VUE运行时优化
 > 1.对于不变的内容，标记出来，不做dom-diff
